@@ -45,7 +45,7 @@ Agent nhận kết quả từ công cụ, cập nhật lại ngữ cảnh nội 
 .
 
 
-### 2.2 Tool Definitions (Inventory)
+
 ## 2.2 Tool Definitions (Inventory)
 
 Bảng dưới đây mô tả các công cụ (tools) được tích hợp trong hệ thống ReAct Agent. Các công cụ này cho phép agent truy cập dữ liệu thời gian thực và thực hiện các tác vụ cụ thể nhằm nâng cao khả năng giải quyết các truy vấn nhiều bước.
@@ -63,7 +63,7 @@ Bảng dưới đây mô tả các công cụ (tools) được tích hợp trong
 
 Team sử dụng GPT-4o-mini để search chính 
 và Gemini 1.5 flash để sử dụng nếu hết tokens 
----
+
 
 ## 3. Telemetry & Performance Dashboard
 
@@ -73,7 +73,7 @@ và Gemini 1.5 flash để sử dụng nếu hết tokens
 Độ trễ tối đa : 6000ms 
 Số token trung bình cho mỗi tác vụ: 1000 tokens
 Tổng chi phí của toàn bộ bộ kiểm thử: 0.1 USD
----
+
 
 ## 4. Root Cause Analysis (RCA) - Failure Traces
 
@@ -85,7 +85,7 @@ Tổng chi phí của toàn bộ bộ kiểm thử: 0.1 USD
  **Input**:" Tôi muốn đi bơi "
  **Observation**:Agent gọi  "get_nearby_places_serpapi" sẽ hiện ra các quán cafe không hiện bể bơi
  **Root Cause**Root Cause (Nguyên nhân gốc rễ): nguyên nhân là nhóm đang thiếu dữ liệu địa điểm khác chưa thể viết thêm dữ liệu về quán cafe 
----
+
 
 ## 5. Ablation Studies & Experiments
 
