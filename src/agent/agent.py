@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import ast
 from typing import List, Dict, Any, Optional
 from src.core.llm_provider import LLMProvider
 from src.telemetry.logger import logger
@@ -48,7 +49,7 @@ class ReActAgent:
             "  Then provide Final Answer combining outfit + nearby cafes.\n"
             "  In the cafe list, ALWAYS include distance for each place and keep them sorted by nearest first.\n"
             "- Final Answer MUST be in Vietnamese and strictly follow this template:\n"
-            "  Thời tiết hiện tại ... nên bạn có thể mặc ...\n"
+            "  Thời tiết vào thời điểm ... có ... nên bạn có thể mặc ...\n"
             "  Các quán cafe ở gần:\n"
             "  1. <Tên quán 1> - <Khoảng cách>\n"
             "  2. <Tên quán 2> - <Khoảng cách>\n"
@@ -85,14 +86,14 @@ class ReActAgent:
 
             # Parse Action in the format: Action: tool_name(arguments)
             action_match = re.search(
-                r"Action:\s*([a-zA-Z_][a-zA-Z0-9_]*)\((.*)\)\s*$",
+                r"Action:\s*([a-zA-Z_][a-zA-Z0-9_]*)\((.*?)\)",
                 content,
                 flags=re.IGNORECASE | re.DOTALL,
             )
             if not action_match:
-                # Fallback: if no valid Action/Final Answer, return raw model output.
+                # Fallback: build a natural answer and ensure cafe suggestions when needed.
                 logger.log_event("AGENT_END", {"steps": steps + 1, "reason": "no_action"})
-                return content or "Model did not return an actionable response."
+                return self._finalize_response(user_input, content)
 
             tool_name = action_match.group(1).strip()
             args = action_match.group(2).strip()
@@ -117,7 +118,102 @@ class ReActAgent:
             steps += 1
             
         logger.log_event("AGENT_END", {"steps": steps, "reason": "max_steps"})
-        return "Reached max steps without Final Answer."
+        last_output = self.history[-1]["llm_output"] if self.history else ""
+        return self._finalize_response(user_input, last_output) or "Reached max steps without Final Answer."
+
+    def _finalize_response(self, user_input: str, raw_text: str) -> str:
+        text = self._humanize_response(raw_text)
+        if self._is_cafe_query(user_input):
+            if "weather_forecast" not in self.tool_results:
+                self._execute_tool("weather_forecast", "")
+            if "suggest_outfit" not in self.tool_results:
+                self._execute_tool("suggest_outfit", "weather_forecast")
+            if "get_nearby_places_serpapi" not in self.tool_results:
+                self._execute_tool("get_nearby_places_serpapi", "")
+            return self._compose_natural_cafe_answer(default_text=text)
+        return text
+
+    def _is_cafe_query(self, user_input: str) -> bool:
+        q = (user_input or "").lower()
+        return any(k in q for k in ["cafe", "cà phê", "coffee", "quán", "quan"])
+
+    def _humanize_response(self, raw_text: str) -> str:
+        text = (raw_text or "").strip()
+        if not text:
+            return "Mình chưa tạo được câu trả lời phù hợp. Bạn thử hỏi lại nhé."
+
+        final_match = re.search(r"Final Answer:\s*(.*)", text, flags=re.IGNORECASE | re.DOTALL)
+        if final_match:
+            text = final_match.group(1).strip()
+
+        observation_match = re.findall(r"Observation:\s*(.*)", text, flags=re.IGNORECASE | re.DOTALL)
+        if observation_match:
+            text = observation_match[-1].strip()
+
+        text = re.sub(r"(?i)Thought:\s*", "", text)
+        text = re.sub(r"(?i)Action:\s*", "", text)
+        text = re.sub(r"(?i)Observation:\s*", "", text).strip()
+        return text
+
+    def _compose_natural_cafe_answer(self, default_text: str = "") -> str:
+        outfit_text = ""
+        outfit_raw = self.tool_results.get("suggest_outfit")
+
+        if isinstance(outfit_raw, dict):
+            outfit = outfit_raw.get("outfit")
+            reason = outfit_raw.get("reason")
+            if isinstance(outfit, list):
+                outfit_text = ", ".join([str(x) for x in outfit if x])
+            else:
+                outfit_text = str(outfit or "").strip()
+            if reason:
+                outfit_text = f"{outfit_text}. {reason}".strip(". ")
+        elif isinstance(outfit_raw, str):
+            cleaned = outfit_raw.strip()
+            if cleaned.startswith("{") and cleaned.endswith("}"):
+                try:
+                    parsed = ast.literal_eval(cleaned)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    outfit = parsed.get("outfit")
+                    reason = parsed.get("reason")
+                    if isinstance(outfit, list):
+                        outfit_text = ", ".join([str(x) for x in outfit if x])
+                    else:
+                        outfit_text = str(outfit or "").strip()
+                    if reason:
+                        outfit_text = f"{outfit_text}. {reason}".strip(". ")
+                else:
+                    outfit_text = cleaned
+            else:
+                outfit_text = cleaned
+
+        if not outfit_text:
+            outfit_text = default_text or "Thời tiết hiện tại khá dễ chịu, bạn có thể mặc trang phục thoải mái để đi cafe."
+
+        places = []
+        nearby_raw = self.tool_results.get("get_nearby_places_serpapi")
+        if isinstance(nearby_raw, list):
+            places = nearby_raw
+        elif isinstance(nearby_raw, str):
+            try:
+                parsed_places = json.loads(nearby_raw)
+                if isinstance(parsed_places, list):
+                    places = parsed_places
+            except Exception:
+                places = []
+
+        if not places:
+            return outfit_text
+
+        lines = []
+        for idx, place in enumerate(places[:5], start=1):
+            name = place.get("name") or "Không rõ tên"
+            distance = place.get("distance") or "Không rõ khoảng cách"
+            lines.append(f"{idx}. {name} - {distance}")
+
+        return f"{outfit_text}\n\nCác quán cafe ở gần:\n" + "\n".join(lines)
 
     def _append_cafe_distances(self, answer: str) -> str:
         """
